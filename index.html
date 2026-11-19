@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>말랑이 AR</title>
+<script type="module" src="https://cdn.jsdelivr.net/npm/@google/model-viewer/dist/model-viewer.min.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+<style>
+  html, body { margin: 0; height: 100%; background: #F4EFE8; overflow: hidden;
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif; color: #4a3b33; }
+  model-viewer { width: 100%; height: 100%; --poster-color: transparent; background: #F4EFE8; }
+  .card { position: absolute; top: 14px; left: 14px; right: 14px; max-width: 360px;
+    background: rgba(255,255,255,.85); backdrop-filter: blur(6px); padding: 12px 14px;
+    border-radius: 14px; box-shadow: 0 4px 18px rgba(80,60,40,.10); }
+  .card h1 { font-size: 16px; margin: 0 0 4px; }
+  .card p { font-size: 12.5px; margin: 0; line-height: 1.5; opacity: .85; }
+  #now { font-weight: 700; color: #5f9e50; }
+  #note { display: none; margin-top: 6px; font-size: 12px; color: #a0522d; }
+  .bar { position: absolute; bottom: 92px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 7px; flex-wrap: wrap; justify-content: center; width: min(520px, 94vw); }
+  .bar button { border: 0; border-radius: 999px; padding: 9px 13px; font-size: 13.5px; font-weight: 600;
+    background: #fff; color: #4a3b33; box-shadow: 0 3px 12px rgba(80,60,40,.15); }
+  .bar button.on { background: #4a3b33; color: #fff; }
+  #ar-btn { position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+    border: 0; border-radius: 999px; padding: 15px 26px; font-size: 16px; font-weight: 700;
+    background: #7CC46A; color: #fff; box-shadow: 0 6px 18px rgba(80,120,60,.35); white-space: nowrap; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; font-size: 15px; }
+</style>
+</head>
+<body>
+<model-viewer id="mv"
+  ar ar-modes="webxr scene-viewer quick-look" ar-placement="floor" ar-scale="fixed"
+  camera-controls touch-action="pan-y" camera-orbit="25deg 70deg 0.55m" min-camera-orbit="auto auto 0.25m"
+  shadow-intensity="1" shadow-softness="0.8" environment-image="neutral" exposure="1.05"
+  autoplay alt="책상 위의 말랑이">
+
+  <div id="loading" slot="poster">말랑이 불러오는 중…</div>
+
+  <div class="card">
+    <h1>말랑이 AR</h1>
+    <p>아래 초록 버튼을 누르고 폰으로 책상을 천천히 비추면 말랑이가 올라가요. 지금: <span id="now">준비 중</span></p>
+    <p id="note"></p>
+  </div>
+
+  <div class="bar" id="bar">
+    <button id="auto" class="on">자동 ON</button>
+  </div>
+
+  <button id="ar-btn" slot="ar-button">📷 책상에 올려보기</button>
+</model-viewer>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+const mv = document.getElementById('mv');
+const nowEl = document.getElementById('now');
+const noteEl = document.getElementById('note');
+const note = t => { noteEl.textContent = t; noteEl.style.display = 'block'; };
+
+/* =========================================================
+   1) 임시 캐릭터 (블렌더 모델이 오기 전까지만 사용)
+      cm 단위로 만들고 루트 0.01배 → GLB는 미터 단위, 원점 = 발바닥
+   ========================================================= */
+function createTempCharacter() {
+  const mat = (color, roughness = 0.85) => new THREE.MeshStandardMaterial({ color, roughness });
+  const M = {
+    body: mat('#FFE3B3'), eye: mat('#2B2420', 0.3), shine: mat('#FFFFFF', 0.2),
+    cheek: mat('#FF9FAE', 0.9), mouth: mat('#5A3A33', 0.6), leaf: mat('#7CC46A', 0.7),
+  };
+  const sphere = new THREE.SphereGeometry(1, 40, 28);
+  const part = (name, material, pos, scale, rot = [0, 0, 0], geo = sphere) => {
+    const m = new THREE.Mesh(geo, material);
+    m.name = name; m.position.set(...pos); m.scale.set(...scale); m.rotation.set(...rot);
+    return m;
+  };
+  const group = (name, pos = [0, 0, 0]) => { const g = new THREE.Group(); g.name = name; g.position.set(...pos); return g; };
+
+  const root = group('TempCharacter');
+  root.scale.setScalar(0.01);
+  const anim = group('AnimRoot');
+  root.add(anim);
+
+  for (const s of [-1, 1])
+    anim.add(part(`Foot_${s < 0 ? 'L' : 'R'}`, M.body, [s * 3.2, 1.2, 1.0], [2.4, 1.3, 2.9]));
+
+  const body = group('BodyGroup');
+  anim.add(body);
+  body.add(part('Body', M.body, [0, 8.6, 0], [8.4, 7.6, 7.6]));
+
+  for (const s of [-1, 1]) {
+    const side = s < 0 ? 'L' : 'R';
+    const pivot = group(`Shoulder_${side}`, [s * 6.4, 8.6, 1.6]);
+    pivot.add(part(`Arm_${side}`, M.body, [s * 1.2, -1.8, 0], [1.6, 2.4, 1.6], [0, 0, s * 0.5]));
+    body.add(pivot);
+
+    const eye = group(`EyeGroup_${side}`, [s * 2.6, 9.8, 7.0]);
+    eye.add(part(`Eye_${side}`, M.eye, [0, 0, 0], [0.78, 1.0, 0.45]));
+    eye.add(part(`EyeShine_${side}`, M.shine, [0.25, 0.35, 0.38], [0.26, 0.26, 0.12]));
+    body.add(eye);
+
+    body.add(part(`Cheek_${side}`, M.cheek, [s * 4.6, 8.4, 6.25], [1.25, 0.75, 0.3], [0, s * 0.63, 0]));
+  }
+  body.add(part('Mouth', M.mouth, [0, 8.85, 7.45], [1, 1, 1], [0, 0, Math.PI],
+    new THREE.TorusGeometry(0.7, 0.17, 10, 24, Math.PI)));
+
+  const sprout = group('Sprout', [0, 15.9, 0]);
+  body.add(sprout);
+  sprout.add(part('Stem', M.leaf, [0, 0.9, 0], [1, 1, 1], [0, 0, 0], new THREE.CylinderGeometry(0.22, 0.28, 2.0, 12)));
+  sprout.add(part('Leaf_L', M.leaf, [-1.35, 2.0, 0], [1.6, 0.42, 0.9], [0, 0,  0.45]));
+  sprout.add(part('Leaf_R', M.leaf, [ 1.35, 2.0, 0], [1.6, 0.42, 0.9], [0, 0, -0.45]));
+  return root;
+}
+
+/* =========================================================
+   2) 동작을 애니메이션 클립으로 굽기 (AR 안에서도 재생되도록)
+      모든 이동은 작게: 걷기는 지름 14cm 원을 한 바퀴 돌고 제자리로
+   ========================================================= */
+const TAU = Math.PI * 2;
+const ease = p => p * p * (3 - 2 * p);
+const bell = p => Math.sin(Math.PI * Math.min(Math.max(p, 0), 1));
+const ANIMATED = ['AnimRoot', 'BodyGroup', 'Shoulder_L', 'Shoulder_R', 'EyeGroup_L', 'EyeGroup_R', 'Foot_L', 'Foot_R', 'Sprout'];
+
+function makeClips(root) {
+  const base = {};
+  for (const n of ANIMATED) {
+    const o = root.getObjectByName(n);
+    base[n] = { p: o.position.toArray(), s: o.scale.toArray() };
+  }
+  const rest = () => Object.fromEntries(ANIMATED.map(n => [n, { p: [...base[n].p], r: [0, 0, 0], s: [...base[n].s] }]));
+
+  // 공통: 숨쉬기 + 새싹 살랑 (클립 길이에 맞춰 끊김 없이 반복되도록 cycles 사용)
+  const breathe = (P, t, dur, cycles, amp = 0.022) => {
+    const b = Math.sin(TAU * cycles * t / dur) * amp;
+    P.BodyGroup.s = [1 + b * 0.6, 1 - b, 1 + b * 0.6];
+    P.Sprout.r[2] = Math.sin(TAU * cycles * 2 * t / dur) * 0.15;
+  };
+
+  const defs = {
+    Idle: [4, (P, t) => {
+      breathe(P, t, 4, 2);
+      const k = 1 - bell((t - 2.6) / 0.16) * 0.88 * (t > 2.6 && t < 2.76 ? 1 : 0);
+      P.EyeGroup_L.s[1] = P.EyeGroup_R.s[1] = k;
+    }],
+    Walk: [9, (P, t) => {
+      const R = 7, th = TAU * t / 9, ph = TAU * 6 * t / 9;   // 반지름 7cm 원, 12걸음
+      P.AnimRoot.p = [R - R * Math.cos(th), Math.abs(Math.sin(ph)) * 0.5, R * Math.sin(th)];
+      P.AnimRoot.r = [0, th, Math.sin(ph) * 0.07];
+      P.Foot_L.p[1] += Math.max(0, Math.sin(ph)) * 0.9;
+      P.Foot_R.p[1] += Math.max(0, -Math.sin(ph)) * 0.9;
+      P.Shoulder_L.r[0] = Math.sin(ph) * 0.35;
+      P.Shoulder_R.r[0] = -Math.sin(ph) * 0.35;
+      P.Sprout.r[2] = Math.sin(ph) * 0.18;
+    }],
+    Wave: [2.4, (P, t) => {
+      breathe(P, t, 2.4, 1);
+      const p = t / 2.4, up = ease(Math.min(1, p / 0.2)) * ease(Math.min(1, (1 - p) / 0.2));
+      P.Shoulder_R.r[2] = up * (2.2 + Math.sin(t * 11) * 0.35);
+      P.BodyGroup.r[2] = -up * 0.06;
+    }],
+    Look: [3.2, (P, t) => {
+      breathe(P, t, 3.2, 1);
+      const p = t / 3.2;
+      P.BodyGroup.r[1] = Math.sin(p * TAU) * 0.45 * bell(p);
+      P.BodyGroup.r[2] = Math.sin(p * TAU) * 0.05 * bell(p);
+    }],
+    Hop: [0.8, (P, t) => {
+      const p = t / 0.8;
+      P.AnimRoot.p[1] = bell((p - 0.1) / 0.8) * 2.0;           // 2cm
+      const sq = p < 0.1 ? -bell(p / 0.1) * 0.1 : p > 0.9 ? -bell((p - 0.9) / 0.1) * 0.1 : bell((p - 0.1) / 0.8) * 0.06;
+      P.AnimRoot.s = [1 - sq * 0.5, 1 + sq, 1 - sq * 0.5];
+    }],
+    Nap: [5, (P, t) => {
+      breathe(P, t, 5, 2, 0.035);
+      const p = t / 5, k = ease(Math.min(1, p / 0.2)) * ease(Math.min(1, (1 - p) / 0.2));
+      P.EyeGroup_L.s[1] = P.EyeGroup_R.s[1] = 1 - k * 0.88;
+      P.BodyGroup.r = [k * (0.1 + Math.max(0, Math.sin(t * 1.6)) * 0.08), 0, k * 0.08];
+      P.AnimRoot.s[1] = 1 - k * 0.04;
+    }],
+  };
+
+  const fps = 30, e = new THREE.Euler(), q = new THREE.Quaternion();
+  return Object.entries(defs).map(([name, [dur, fn]]) => {
+    const n = Math.round(dur * fps) + 1, times = [];
+    const data = Object.fromEntries(ANIMATED.map(k => [k, { p: [], q: [], s: [], last: null }]));
+    for (let i = 0; i < n; i++) {
+      const t = (i / (n - 1)) * dur;
+      times.push(t);
+      const P = rest(); fn(P, t);
+      for (const k of ANIMATED) {
+        const d = data[k];
+        d.p.push(...P[k].p); d.s.push(...P[k].s);
+        e.set(P[k].r[0], P[k].r[1], P[k].r[2], 'YXZ'); q.setFromEuler(e);
+        if (d.last && d.last.dot(q) < 0) q.set(-q.x, -q.y, -q.z, -q.w);   // 회전 튐 방지
+        d.last = q.clone();
+        d.q.push(q.x, q.y, q.z, q.w);
+      }
+    }
+    const tracks = ANIMATED.flatMap(k => [
+      new THREE.VectorKeyframeTrack(`${k}.position`, times, data[k].p),
+      new THREE.QuaternionKeyframeTrack(`${k}.quaternion`, times, data[k].q),
+      new THREE.VectorKeyframeTrack(`${k}.scale`, times, data[k].s),
+    ]);
+    return new THREE.AnimationClip(name, dur, tracks);
+  });
+}
+
+async function buildTempModelURL() {
+  const root = createTempCharacter();
+  const glb = await new GLTFExporter().parseAsync(root, { binary: true, animations: makeClips(root) });
+  return URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+}
+
+/* =========================================================
+   3) 모델 선택: 같은 폴더에 character.glb(블렌더 모델)가 있으면 그걸 사용
+   ========================================================= */
+async function exists(url) {
+  try { return (await fetch(url, { method: 'HEAD', cache: 'no-store' })).ok; } catch { return false; }
+}
+let usingTemp = false;
+if (await exists('character.glb')) {
+  mv.src = 'character.glb';
+} else {
+  usingTemp = true;
+  mv.src = await buildTempModelURL();
+}
+
+/* =========================================================
+   4) 동작 재생 (자동 + 버튼)
+   ========================================================= */
+const LABEL = { Idle: '쉬는 중', Walk: '아장아장', Wave: '손 흔들기', Look: '두리번', Hop: '콩 점프', Nap: '꾸벅 졸기' };
+const label = n => LABEL[n] ?? n;
+let idleName = null, actions = [], auto = true, timer = null;
+
+function playOnce(name) {
+  clearTimeout(timer);
+  mv.animationName = name;
+  mv.currentTime = 0;
+  mv.play({ repetitions: 1 });
+  nowEl.textContent = label(name);
+}
+function goIdle() {
+  clearTimeout(timer);
+  if (idleName) { mv.animationName = idleName; mv.play(); }
+  nowEl.textContent = label(idleName ?? 'Idle');
+  if (auto && actions.length)
+    timer = setTimeout(() => playOnce(actions[Math.floor(Math.random() * actions.length)]), 2500 + Math.random() * 3000);
+}
+mv.addEventListener('finished', goIdle);
+
+mv.addEventListener('load', () => {
+  const names = mv.availableAnimations || [];
+  idleName = names.find(n => /idle/i.test(n)) ?? null;
+  actions = names.filter(n => n !== idleName);
+
+  const bar = document.getElementById('bar');
+  bar.querySelectorAll('[data-act]').forEach(b => b.remove());
+  for (const n of actions) {
+    const b = document.createElement('button');
+    b.dataset.act = n; b.textContent = label(n);
+    b.addEventListener('click', e => { e.stopPropagation(); playOnce(n); });
+    bar.appendChild(b);
+  }
+  goIdle();
+
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (!mv.canActivateAR) note('이 기기나 브라우저에서는 AR을 쓸 수 없어요. 아이폰(Safari) 또는 안드로이드(Chrome)에서 열어 주세요. 여기서는 3D로만 볼 수 있어요.');
+  else if (isIOS && usingTemp) note('아이폰 AR에서는 임시 캐릭터가 움직이지 않고 서 있는 모습으로 나와요.');
+});
+
+mv.addEventListener('error', () => note('모델을 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.'));
+
+const autoBtn = document.getElementById('auto');
+autoBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  auto = !auto;
+  autoBtn.textContent = auto ? '자동 ON' : '자동 OFF';
+  autoBtn.classList.toggle('on', auto);
+  goIdle();
+});
+</script>
+</body>
+</html>
