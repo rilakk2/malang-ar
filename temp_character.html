@@ -43,6 +43,7 @@
   <button data-act="wave">손 흔들기</button>
   <button data-act="look">두리번</button>
   <button data-act="hop">콩 점프</button>
+  <button data-act="shake">풀 흔들기</button>
   <button data-act="nap">꾸벅 졸기</button>
   <button id="export" class="primary">GLB로 저장</button>
 </div>
@@ -170,7 +171,7 @@ const bell = p => Math.sin(Math.PI * Math.min(Math.max(p, 0), 1));   // 0→1→
 const angleDiff = (a, b) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
 
 const nowEl = document.getElementById('now');
-const LABEL = { idle: '쉬는 중', walk: '아장아장', wave: '손 흔들기', look: '두리번', hop: '콩 점프', nap: '꾸벅 졸기' };
+const LABEL = { idle: '쉬는 중', walk: '아장아장', wave: '손 흔들기', look: '두리번', hop: '콩 점프', shake: '풀 흔들기', nap: '꾸벅 졸기' };
 
 let act = { name: 'idle', t: 0, dur: 2 };
 let auto = true;
@@ -182,11 +183,12 @@ function clearPose() {   // 동작 중간에 바뀌어도 자세가 남지 않�
   ch.arms.forEach(a => a.rotation.set(0, 0, 0));
   ch.eyes.forEach(e => e.scale.set(1, 1, 1));
   ch.feet.forEach(f => (f.position.y = 1.2));
+  ch.sprout.rotation.x = 0;
 }
 
 function start(name) {
   clearPose();
-  act = { name, t: 0, dur: { idle: 1.5 + Math.random() * 2, wave: 2.2, look: 3.2, hop: 0.6, nap: 4.5, walk: 12 }[name] };
+  act = { name, t: 0, dur: { idle: 1.5 + Math.random() * 2, wave: 2.2, look: 3.2, hop: 0.6, shake: 2.4, nap: 4.5, walk: 12 }[name] };
   if (name === 'walk') {
     const p = ch.root.position;
     let tx, tz, tries = 0;
@@ -260,6 +262,16 @@ function update(dt) {
       ch.anim.scale.set(1 - sq * 0.5, 1 + sq, 1 - sq * 0.5);
       break;
     }
+    case 'shake': {  // 머리 위 풀을 부르르 흔들기
+      const k = ease(Math.min(1, p / 0.15)) * ease(Math.min(1, (1 - p) / 0.25));
+      const w = act.t * 15;
+      ch.sprout.rotation.z = Math.sin(w) * 0.65 * k;
+      ch.sprout.rotation.x = Math.sin(w * 0.5) * 0.15 * k;
+      b.rotation.z = Math.sin(w - 0.8) * 0.07 * k;
+      b.scale.set(1 + 0.03 * k, 1 - 0.04 * k, 1 + 0.03 * k);
+      ch.eyes.forEach(e => (e.scale.y = Math.min(e.scale.y, 1 - 0.55 * k)));
+      break;
+    }
     case 'nap': {    // 눈 감고 꾸벅
       const k = ease(Math.min(1, p / 0.2)) * ease(Math.min(1, (1 - p) / 0.2));
       ch.eyes.forEach(e => (e.scale.y = 1 - k * 0.88));
@@ -276,7 +288,7 @@ function pickNext() {
   if (act.name !== 'idle') return start('idle');
   if (!auto) return start('idle');
   const r = Math.random();
-  start(r < 0.38 ? 'walk' : r < 0.55 ? 'look' : r < 0.70 ? 'wave' : r < 0.85 ? 'hop' : 'nap');
+  start(r < 0.32 ? 'walk' : r < 0.46 ? 'look' : r < 0.60 ? 'wave' : r < 0.73 ? 'hop' : r < 0.87 ? 'shake' : 'nap');
 }
 
 /* ---------- 루프 ---------- */

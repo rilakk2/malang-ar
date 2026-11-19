@@ -176,6 +176,14 @@ function makeClips(root) {
       const sq = p < 0.1 ? -bell(p / 0.1) * 0.1 : p > 0.9 ? -bell((p - 0.9) / 0.1) * 0.1 : bell((p - 0.1) / 0.8) * 0.06;
       P.AnimRoot.s = [1 - sq * 0.5, 1 + sq, 1 - sq * 0.5];
     }],
+    Shake: [2.4, (P, t) => {   // 머리 위 풀을 부르르 흔들기
+      const p = t / 2.4, k = ease(Math.min(1, p / 0.15)) * ease(Math.min(1, (1 - p) / 0.25));
+      const w = t * 15;
+      P.Sprout.r = [Math.sin(w * 0.5) * 0.15 * k, 0, Math.sin(w) * 0.65 * k];
+      P.BodyGroup.r[2] = Math.sin(w - 0.8) * 0.07 * k;
+      P.BodyGroup.s = [1 + 0.03 * k, 1 - 0.04 * k, 1 + 0.03 * k];
+      P.EyeGroup_L.s[1] = P.EyeGroup_R.s[1] = 1 - 0.55 * k;   // 질끈 감은 눈
+    }],
     Nap: [5, (P, t) => {
       breathe(P, t, 5, 2, 0.035);
       const p = t / 5, k = ease(Math.min(1, p / 0.2)) * ease(Math.min(1, (1 - p) / 0.2));
@@ -234,7 +242,7 @@ if (await exists('character.glb')) {
 /* =========================================================
    4) 동작 재생 (자동 + 버튼)
    ========================================================= */
-const LABEL = { Idle: '쉬는 중', Walk: '아장아장', Wave: '손 흔들기', Look: '두리번', Hop: '콩 점프', Nap: '꾸벅 졸기' };
+const LABEL = { Idle: '쉬는 중', Walk: '아장아장', Wave: '손 흔들기', Look: '두리번', Hop: '콩 점프', Shake: '풀 흔들기', Nap: '꾸벅 졸기' };
 const label = n => LABEL[n] ?? n;
 let idleName = null, actions = [], auto = true, timer = null;
 
